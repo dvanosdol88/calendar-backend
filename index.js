@@ -35,9 +35,10 @@ ${JSON.stringify(calendarData, null, 2)}
 
     res.send({ answer: completion.choices[0].message.content });
   } catch (err) {
-    console.error("Error talking to OpenAI:", err.message);
-    res.status(500).send({ error: "Error communicating with GPT." });
-  }
+  console.error("🔥 FULL ERROR:", err);
+  res.status(500).send({ error: "Error communicating with GPT." });
+}
+
 });
 
 const PORT = process.env.PORT || 3000;
