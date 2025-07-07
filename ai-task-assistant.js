@@ -43,7 +43,7 @@ Response format (JSON only):
   "isTaskCommand": boolean,
   "isListCommand": boolean,
   "isCalendarCommand": boolean,
-  "action": "add|complete|delete|edit|list|status|add_item|remove_item|toggle_item|create_list|show_list",
+  "action": "add|complete|delete|edit|list|status|add_item|remove_item|toggle_item|create_list|show_list|modify_list",
   "taskType": "work|personal",
   "taskText": "text content",
   "taskId": "id if editing/deleting specific task",
@@ -59,7 +59,9 @@ LIST command examples:
 - "Add apples to grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "add_item", "confidence": 95}
 - "Remove Greek yogurt from grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
 - "Delete Greek yogurt from grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
-- "Please delete greek yogurt from the grocery list and add apples" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
+- "Please delete greek yogurt from the grocery list and add apples" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "modify_list", "confidence": 95}
+- "Remove bread and add milk to grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "modify_list", "confidence": 95}
+- "Delete eggs from shopping list and add cheese" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "modify_list", "confidence": 95}
 - "Take Greek yogurt off the grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
 - "Mark milk as bought from grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "toggle_item", "confidence": 95}
 - "Show my grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "show_list", "confidence": 95}
