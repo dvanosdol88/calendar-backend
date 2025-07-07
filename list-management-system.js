@@ -56,6 +56,7 @@ export class ListManagementSystem {
         - "Add 'Call John' to work todo list"
         - "Create grocery list with milk, bread, eggs"
         - "Show me my grocery list"
+        - "Please delete greek yogurt from the grocery list and add apples"
 
         COMMAND TYPES:
         - add_item: Add new item to existing list
@@ -63,7 +64,7 @@ export class ListManagementSystem {
         - toggle_item: Mark item as done/undone
         - create_list: Create new list with items
         - show_list: Display list contents
-        - modify_list: General list modification
+        - modify_list: Multiple operations in one command (remove + add, etc.)
 
         Response format (JSON only):
         {
@@ -73,9 +74,12 @@ export class ListManagementSystem {
             "listName": "name of the list",
             "itemText": "text of the item",
             "items": ["array", "of", "items"],
+            "operations": [{"action": "remove_item", "itemText": "item to remove"}, {"action": "add_item", "itemText": "item to add"}],
             "confidence": 0-100,
             "reasoning": "explanation of classification"
-        }`;
+        }
+
+        IMPORTANT: For compound commands like "delete X and add Y", use action="modify_list" and include operations array.`;
 
         try {
             const completion = await this.openai.chat.completions.create({
@@ -431,6 +435,9 @@ export class ListManagementSystem {
                 case 'show_list':
                     return await this.handleShowList(analysis);
                     
+                case 'modify_list':
+                    return await this.handleModifyList(analysis);
+                    
                 default:
                     return {
                         success: false,
@@ -577,6 +584,99 @@ export class ListManagementSystem {
         }
         
         return await this.showListContents(listTasks[0]);
+    }
+
+    /**
+     * Handle modify list command (compound operations)
+     */
+    async handleModifyList(analysis) {
+        if (!analysis.operations || analysis.operations.length === 0) {
+            return {
+                success: false,
+                message: "No operations specified for list modification"
+            };
+        }
+
+        const listTasks = await this.findListTasks(analysis.listType, analysis.listName);
+        
+        if (listTasks.length === 0) {
+            return {
+                success: false,
+                message: `No ${analysis.listType || 'list'} found to modify`
+            };
+        }
+        
+        if (listTasks.length > 1) {
+            // Multiple lists found - ask for clarification
+            const options = listTasks.map((task, index) => 
+                `${String.fromCharCode(65 + index)}. ${task.text}`
+            ).join('\n');
+            
+            return {
+                success: false,
+                requiresClarification: true,
+                message: `Multiple lists found. Which one would you like to modify?\n\n${options}`,
+                matches: listTasks
+            };
+        }
+
+        const listTask = listTasks[0];
+        const results = [];
+        let hasErrors = false;
+
+        // Execute each operation in sequence
+        for (const operation of analysis.operations) {
+            let result;
+            
+            switch (operation.action) {
+                case 'remove_item':
+                    result = await this.removeItemFromList(listTask, operation.itemText);
+                    break;
+                case 'add_item':
+                    result = await this.addItemToList(listTask, operation.itemText);
+                    break;
+                case 'toggle_item':
+                    result = await this.toggleItemInList(listTask, operation.itemText);
+                    break;
+                default:
+                    result = {
+                        success: false,
+                        message: `Unknown operation: ${operation.action}`
+                    };
+            }
+            
+            results.push(result);
+            
+            if (!result.success) {
+                hasErrors = true;
+            }
+        }
+
+        // Generate summary message
+        const successfulOps = results.filter(r => r.success);
+        const failedOps = results.filter(r => !r.success);
+        
+        let message = '';
+        if (successfulOps.length > 0) {
+            const messages = successfulOps.map(r => r.message).join(', ');
+            message = `Successfully: ${messages}`;
+        }
+        
+        if (failedOps.length > 0) {
+            const errorMessages = failedOps.map(r => r.message).join(', ');
+            if (message) {
+                message += `. Issues: ${errorMessages}`;
+            } else {
+                message = `Failed: ${errorMessages}`;
+            }
+        }
+
+        return {
+            success: successfulOps.length > 0,
+            message: message,
+            operations: results,
+            task: listTask
+        };
     }
 }
 
