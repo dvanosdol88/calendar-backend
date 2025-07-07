@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import axios from 'axios';
 import dotenv from 'dotenv';
+import GoogleCalendarIntegration from './google-calendar-integration.js';
 
 dotenv.config();
 
@@ -24,19 +25,21 @@ class AITaskAssistant {
             apiKey: process.env.OPENAI_API_KEY
         });
         this.baseUrl = baseUrl;
+        this.calendarIntegration = new GoogleCalendarIntegration();
     }
 
     /**
-     * Analyzes user input to determine if it's a task-related command
+     * Analyzes user input to determine if it's a task-related or calendar-related command
      * @param {string} userInput - The user's natural language input
      * @returns {Object} Analysis result with command type and parameters
      */
     async analyzeTaskCommand(userInput) {
-        const systemPrompt = `You are a task management command parser. Analyze the user input and determine if it's a task-related command.
+        const systemPrompt = `You are a command parser for task management and calendar operations. Analyze the user input and determine if it's a task-related or calendar-related command.
 
 Response format (JSON only):
 {
   "isTaskCommand": boolean,
+  "isCalendarCommand": boolean,
   "action": "add|complete|delete|edit|list|status",
   "taskType": "work|personal",
   "taskText": "text content",
@@ -44,14 +47,21 @@ Response format (JSON only):
   "confidence": 0-100
 }
 
-Task command examples:
-- "Add 'Review Q4 reports' to my work tasks" → {"isTaskCommand": true, "action": "add", "taskType": "work", "taskText": "Review Q4 reports", "confidence": 95}
-- "Mark 'Call John' as done" → {"isTaskCommand": true, "action": "complete", "taskText": "Call John", "confidence": 90}
-- "What's on my work task list?" → {"isTaskCommand": true, "action": "list", "taskType": "work", "confidence": 95}
-- "Delete the meeting task" → {"isTaskCommand": true, "action": "delete", "taskText": "meeting", "confidence": 85}
-- "Change 'Meeting at 2pm' to 'Meeting at 3pm'" → {"isTaskCommand": true, "action": "edit", "taskText": "Meeting at 3pm", "confidence": 90}
+TASK command examples:
+- "Add 'Review Q4 reports' to my work tasks" → {"isTaskCommand": true, "isCalendarCommand": false, "action": "add", "taskType": "work", "taskText": "Review Q4 reports", "confidence": 95}
+- "Mark 'Call John' as done" → {"isTaskCommand": true, "isCalendarCommand": false, "action": "complete", "taskText": "Call John", "confidence": 90}
+- "What's on my work task list?" → {"isTaskCommand": true, "isCalendarCommand": false, "action": "list", "taskType": "work", "confidence": 95}
 
-If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
+CALENDAR command examples (these should be handled by calendar integration):
+- "Add 'Zoom with Stacy Rankin' to my calendar for today at 4:30" → {"isTaskCommand": false, "isCalendarCommand": true, "confidence": 95}
+- "Schedule dentist appointment tomorrow at 10 AM" → {"isTaskCommand": false, "isCalendarCommand": true, "confidence": 95}
+- "What's on my calendar today?" → {"isTaskCommand": false, "isCalendarCommand": true, "confidence": 95}
+- "Put client meeting on my calendar for next Friday at 2 PM" → {"isTaskCommand": false, "isCalendarCommand": true, "confidence": 95}
+
+IMPORTANT: Calendar commands should have isCalendarCommand=true and isTaskCommand=false
+Task commands should have isTaskCommand=true and isCalendarCommand=false
+
+If neither task nor calendar command, return: {"isTaskCommand": false, "isCalendarCommand": false, "confidence": 0}`;
 
         try {
             const completion = await this.openai.chat.completions.create({
@@ -67,8 +77,8 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
             const response = completion.choices[0].message.content.trim();
             return JSON.parse(response);
         } catch (error) {
-            console.error('Error analyzing task command:', error);
-            return { isTaskCommand: false, confidence: 0 };
+            console.error('Error analyzing command:', error);
+            return { isTaskCommand: false, isCalendarCommand: false, confidence: 0 };
         }
     }
 
@@ -850,13 +860,29 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
             };
         }
 
-        // First, analyze if this is a task command
+        // First, analyze if this is a task or calendar command
         const commandAnalysis = await this.analyzeTaskCommand(userInput);
         
+        // Handle calendar commands
+        if (commandAnalysis.isCalendarCommand && commandAnalysis.confidence >= 70) {
+            const calendarResult = await this.calendarIntegration.processCalendarCommand(userInput);
+            const calendarResponse = await this.calendarIntegration.generateCalendarResponse(userInput, calendarResult);
+            
+            return {
+                isTaskCommand: false,
+                isCalendarCommand: true,
+                commandAnalysis,
+                executionResult: calendarResult,
+                aiResponse: calendarResponse
+            };
+        }
+        
+        // Handle task commands
         if (!commandAnalysis.isTaskCommand || commandAnalysis.confidence < 70) {
             return {
                 isTaskCommand: false,
-                message: "This doesn't appear to be a task-related command. Try commands like 'Add task to work list', 'Mark task as done', or 'What are my tasks?'"
+                isCalendarCommand: false,
+                message: "This doesn't appear to be a task-related or calendar-related command. Try commands like 'Add task to work list', 'Mark task as done', 'What are my tasks?', or 'Add meeting to my calendar for tomorrow at 2pm'"
             };
         }
 

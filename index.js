@@ -10,6 +10,8 @@ import AITaskAssistant from './ai-task-assistant.js';
 import ConversationManager from './conversation-manager.js';
 import ContextManager from './context-manager.js';
 import AntiHallucinationFilter from './anti-hallucination-filter.js';
+import GoogleCalendarIntegration from './google-calendar-integration.js';
+import GoogleOAuthFlow from './google-oauth-flow.js';
 
 dotenv.config();
 const app = express();
@@ -35,6 +37,8 @@ const aiTaskAssistant = new AITaskAssistant();
 const conversationManager = new ConversationManager();
 const contextManager = new ContextManager(conversationManager);
 const antiHallucinationFilter = new AntiHallucinationFilter();
+const calendarIntegration = new GoogleCalendarIntegration();
+const oauthFlow = new GoogleOAuthFlow();
 
 // Initialize conversation manager on startup
 conversationManager.initialize().then(() => {
@@ -69,10 +73,10 @@ app.post('/ask-gpt', async (req, res) => {
       prompt
     );
     
-    // First, check if this is a task-related command
+    // First, check if this is a task-related or calendar-related command
     const taskResult = await aiTaskAssistant.processUserInput(prompt, clarificationContext);
     
-    if (taskResult.isTaskCommand) {
+    if (taskResult.isTaskCommand || taskResult.isCalendarCommand) {
       // Apply anti-hallucination filter to task response
       const filteredTaskResponse = antiHallucinationFilter.filterResponse(
         taskResult.aiResponse, 
@@ -85,7 +89,8 @@ app.post('/ask-gpt', async (req, res) => {
         'assistant',
         filteredTaskResponse.response,
         { 
-          taskCommand: true,
+          taskCommand: taskResult.isTaskCommand,
+          calendarCommand: taskResult.isCalendarCommand,
           executionResult: taskResult.executionResult,
           antiHallucinationFilter: {
             wasFiltered: filteredTaskResponse.wasRewritten,
@@ -99,7 +104,8 @@ app.post('/ask-gpt', async (req, res) => {
       // Handle task commands and clarification responses
       const response = {
         answer: filteredTaskResponse.response,
-        taskCommand: true,
+        taskCommand: taskResult.isTaskCommand,
+        calendarCommand: taskResult.isCalendarCommand,
         executionResult: taskResult.executionResult,
         conversationId: conversation.conversationId,
         antiHallucinationFilter: {
@@ -328,6 +334,233 @@ app.post('/api/sessions/sync', async (req, res) => {
   } catch (error) {
     console.error('Error syncing session:', error);
     res.status(500).json({ error: 'Failed to sync session' });
+  }
+});
+
+// Google Calendar API Endpoints
+
+// Create calendar event
+app.post('/api/calendar/events', async (req, res) => {
+  const { eventTitle, dateTime, duration, description, location, timeZone } = req.body;
+  
+  if (!eventTitle || !dateTime) {
+    return res.status(400).json({ 
+      error: "Event title and dateTime are required" 
+    });
+  }
+  
+  try {
+    const result = await calendarIntegration.addEvent({
+      eventTitle,
+      dateTime,
+      duration: duration || 60,
+      description: description || '',
+      location: location || '',
+      timeZone: timeZone || 'America/New_York'
+    });
+    
+    if (result.success) {
+      res.json({ success: true, data: result });
+    } else {
+      res.status(500).json({ error: result.message });
+    }
+  } catch (error) {
+    console.error('Error creating calendar event:', error);
+    res.status(500).json({ error: 'Failed to create calendar event' });
+  }
+});
+
+// Get calendar events
+app.get('/api/calendar/events', async (req, res) => {
+  const { startDate, endDate } = req.query;
+  
+  try {
+    const start = startDate ? new Date(startDate) : new Date();
+    const end = endDate ? new Date(endDate) : new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000);
+    
+    const result = await calendarIntegration.getEvents(start, end);
+    
+    if (result.success) {
+      res.json({ success: true, data: result });
+    } else {
+      res.status(500).json({ error: result.message });
+    }
+  } catch (error) {
+    console.error('Error fetching calendar events:', error);
+    res.status(500).json({ error: 'Failed to fetch calendar events' });
+  }
+});
+
+// Update calendar event
+app.put('/api/calendar/events/:eventId', async (req, res) => {
+  const { eventId } = req.params;
+  const { eventTitle, dateTime, duration, description, location, timeZone } = req.body;
+  
+  try {
+    const result = await calendarIntegration.updateEvent(eventId, {
+      eventTitle,
+      dateTime,
+      duration,
+      description,
+      location,
+      timeZone
+    });
+    
+    if (result.success) {
+      res.json({ success: true, data: result });
+    } else {
+      res.status(500).json({ error: result.message });
+    }
+  } catch (error) {
+    console.error('Error updating calendar event:', error);
+    res.status(500).json({ error: 'Failed to update calendar event' });
+  }
+});
+
+// Delete calendar event
+app.delete('/api/calendar/events/:eventId', async (req, res) => {
+  const { eventId } = req.params;
+  
+  try {
+    const result = await calendarIntegration.deleteEvent(eventId);
+    
+    if (result.success) {
+      res.json({ success: true, data: result });
+    } else {
+      res.status(500).json({ error: result.message });
+    }
+  } catch (error) {
+    console.error('Error deleting calendar event:', error);
+    res.status(500).json({ error: 'Failed to delete calendar event' });
+  }
+});
+
+// Calendar capabilities endpoint
+app.get('/api/calendar/capabilities', (req, res) => {
+  try {
+    const isAvailable = calendarIntegration.isCalendarAvailable();
+    res.json({
+      available: isAvailable,
+      features: [
+        'Create events',
+        'List events',
+        'Update events',
+        'Delete events',
+        'Natural language processing',
+        'Timezone support'
+      ],
+      description: 'Google Calendar integration with natural language processing'
+    });
+  } catch (error) {
+    console.error('Error fetching calendar capabilities:', error);
+    res.status(500).json({ error: 'Failed to fetch calendar capabilities' });
+  }
+});
+
+// OAuth 2.0 authentication endpoints
+
+// Start OAuth flow - redirect user to Google consent screen
+app.get('/api/calendar/auth', (req, res) => {
+  try {
+    if (process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+      return res.json({
+        message: 'Calendar authentication endpoint',
+        status: 'Service account authentication is configured via environment variables',
+        note: 'Service account is already configured. OAuth flow not needed.',
+        serviceAccountMode: true
+      });
+    }
+
+    const authUrl = oauthFlow.getAuthUrl();
+    res.json({
+      authUrl,
+      message: 'Visit the authUrl to authorize calendar access',
+      instructions: 'After authorization, you will be redirected back with an authorization code'
+    });
+  } catch (error) {
+    console.error('Error starting OAuth flow:', error);
+    res.status(500).json({ error: 'Failed to start OAuth flow' });
+  }
+});
+
+// OAuth callback endpoint - exchange code for tokens
+app.get('/auth/google/callback', async (req, res) => {
+  const { code, error } = req.query;
+
+  if (error) {
+    return res.status(400).json({
+      error: 'OAuth authorization failed',
+      details: error
+    });
+  }
+
+  if (!code) {
+    return res.status(400).json({
+      error: 'No authorization code provided'
+    });
+  }
+
+  try {
+    const result = await oauthFlow.exchangeCodeForTokens(code);
+    
+    if (result.success) {
+      // In production, you would store the refresh token securely
+      console.log('OAuth Success - Refresh Token:', result.refreshToken);
+      
+      res.json({
+        success: true,
+        message: 'Calendar authorization successful!',
+        refreshToken: result.refreshToken,
+        note: 'Store this refresh token in your environment variables as GOOGLE_CALENDAR_REFRESH_TOKEN'
+      });
+    } else {
+      res.status(500).json({
+        error: 'Failed to exchange authorization code',
+        details: result.error
+      });
+    }
+  } catch (error) {
+    console.error('Error in OAuth callback:', error);
+    res.status(500).json({ error: 'OAuth callback failed' });
+  }
+});
+
+// Check OAuth authentication status
+app.get('/api/calendar/auth/status', async (req, res) => {
+  try {
+    const isAuthenticated = oauthFlow.isAuthenticated();
+    
+    if (isAuthenticated) {
+      const profile = await oauthFlow.getUserProfile();
+      const calendars = await oauthFlow.getCalendarList();
+      
+      res.json({
+        authenticated: true,
+        profile: profile.success ? profile.profile : null,
+        calendars: calendars.success ? calendars.calendars : [],
+        message: 'User is authenticated via OAuth 2.0'
+      });
+    } else {
+      res.json({
+        authenticated: false,
+        message: 'User not authenticated. Use /api/calendar/auth to start OAuth flow',
+        serviceAccountMode: !!process.env.GOOGLE_SERVICE_ACCOUNT_KEY
+      });
+    }
+  } catch (error) {
+    console.error('Error checking auth status:', error);
+    res.status(500).json({ error: 'Failed to check authentication status' });
+  }
+});
+
+// Revoke OAuth authentication
+app.post('/api/calendar/auth/revoke', async (req, res) => {
+  try {
+    const result = await oauthFlow.revokeAuthentication();
+    res.json(result);
+  } catch (error) {
+    console.error('Error revoking authentication:', error);
+    res.status(500).json({ error: 'Failed to revoke authentication' });
   }
 });
 
