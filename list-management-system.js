@@ -111,8 +111,6 @@ export class ListManagementSystem {
      */
     async findListTasks(listType, listName) {
         try {
-            console.log(`🔍 Finding list tasks with listType: "${listType}", listName: "${listName}"`);
-            
             const response = await axios.get(`${this.baseUrl}/api/tasks`);
             const allTasks = response.data.data;
             
@@ -121,11 +119,8 @@ export class ListManagementSystem {
             // Search through all task types
             for (const [taskType, tasks] of Object.entries(allTasks)) {
                 for (const task of tasks) {
-                    console.log(`Checking task: "${task.text}" against listType: "${listType}"`);
-                    
                     // Check if task text matches list criteria
                     if (this.isListTask(task.text, listType, listName)) {
-                        console.log(`✅ Match found: "${task.text}"`);
                         matches.push({
                             ...task,
                             taskType,
@@ -135,7 +130,6 @@ export class ListManagementSystem {
                 }
             }
             
-            console.log(`🎯 Found ${matches.length} matching list tasks`);
             return matches;
         } catch (error) {
             console.error('Error finding list tasks:', error);
