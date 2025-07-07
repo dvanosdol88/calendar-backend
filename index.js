@@ -3,12 +3,16 @@ import dotenv from 'dotenv';
 import OpenAI from 'openai';
 import fs from 'fs';
 import cors from 'cors'; // <--- Added this line
+import gmailRouter from './gmail-integration.js';
 
 dotenv.config();
 const app = express();
 
 app.use(cors()); // <--- Added this line to enable CORS for all origins
 app.use(express.json());
+
+// Gmail integration routes
+app.use(gmailRouter);
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
