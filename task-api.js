@@ -7,7 +7,10 @@ import {
     toggleTask, 
     deleteTask, 
     editTask,
-    getTasksForAI 
+    getTasksForAI,
+    addItemToList,
+    removeItemFromList,
+    toggleSubItem 
 } from './task-storage.js';
 
 const router = express.Router();
@@ -60,7 +63,7 @@ router.get('/api/tasks/:type', async (req, res) => {
 router.post('/api/tasks/:type', async (req, res) => {
     try {
         const { type } = req.params;
-        const { text } = req.body;
+        const { text, subItems } = req.body;
         
         if (!['work', 'personal'].includes(type)) {
             return res.status(400).json({ 
@@ -76,7 +79,7 @@ router.post('/api/tasks/:type', async (req, res) => {
             });
         }
         
-        const newTask = await addTask(type, text.trim());
+        const newTask = await addTask(type, text.trim(), subItems || []);
         
         if (newTask) {
             res.json({
@@ -140,7 +143,7 @@ router.patch('/api/tasks/:type/:id/toggle', async (req, res) => {
 router.patch('/api/tasks/:type/:id', async (req, res) => {
     try {
         const { type, id } = req.params;
-        const { text } = req.body;
+        const { text, subItems } = req.body;
         
         if (!['work', 'personal'].includes(type)) {
             return res.status(400).json({ 
@@ -149,14 +152,19 @@ router.patch('/api/tasks/:type/:id', async (req, res) => {
             });
         }
         
-        if (!text || !text.trim()) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Task text is required' 
-            });
+        // Support both string and object updates
+        let updates;
+        if (text && !subItems) {
+            // Backward compatibility for simple text updates
+            updates = text.trim();
+        } else {
+            // New object-based updates with sub-items support
+            updates = {};
+            if (text) updates.text = text.trim();
+            if (subItems !== undefined) updates.subItems = subItems;
         }
         
-        const updatedTask = await editTask(type, id, text.trim());
+        const updatedTask = await editTask(type, id, updates);
         
         if (updatedTask) {
             res.json({
@@ -230,6 +238,122 @@ router.get('/api/tasks-for-ai', async (req, res) => {
         res.status(500).json({ 
             success: false, 
             error: 'Failed to format tasks for AI' 
+        });
+    }
+});
+
+// Add item to list task
+router.post('/api/tasks/:type/:id/items', async (req, res) => {
+    try {
+        const { type, id } = req.params;
+        const { text } = req.body;
+        
+        if (!['work', 'personal'].includes(type)) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Invalid task type. Use "work" or "personal"' 
+            });
+        }
+        
+        if (!text || !text.trim()) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Item text is required' 
+            });
+        }
+        
+        const newItem = await addItemToList(type, id, text.trim());
+        
+        if (newItem) {
+            res.json({
+                success: true,
+                data: newItem,
+                message: 'Item added to list',
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(404).json({ 
+                success: false, 
+                error: 'Task not found' 
+            });
+        }
+    } catch (error) {
+        console.error('Error adding item to list:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to add item to list' 
+        });
+    }
+});
+
+// Remove item from list task
+router.delete('/api/tasks/:type/:id/items/:itemText', async (req, res) => {
+    try {
+        const { type, id, itemText } = req.params;
+        
+        if (!['work', 'personal'].includes(type)) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Invalid task type. Use "work" or "personal"' 
+            });
+        }
+        
+        const removedItem = await removeItemFromList(type, id, decodeURIComponent(itemText));
+        
+        if (removedItem) {
+            res.json({
+                success: true,
+                data: removedItem,
+                message: 'Item removed from list',
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(404).json({ 
+                success: false, 
+                error: 'Task or item not found' 
+            });
+        }
+    } catch (error) {
+        console.error('Error removing item from list:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to remove item from list' 
+        });
+    }
+});
+
+// Toggle sub-item completion
+router.patch('/api/tasks/:type/:id/items/:itemText/toggle', async (req, res) => {
+    try {
+        const { type, id, itemText } = req.params;
+        
+        if (!['work', 'personal'].includes(type)) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Invalid task type. Use "work" or "personal"' 
+            });
+        }
+        
+        const toggledItem = await toggleSubItem(type, id, decodeURIComponent(itemText));
+        
+        if (toggledItem) {
+            res.json({
+                success: true,
+                data: toggledItem,
+                message: `Item marked as ${toggledItem.completed ? 'completed' : 'incomplete'}`,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(404).json({ 
+                success: false, 
+                error: 'Task or item not found' 
+            });
+        }
+    } catch (error) {
+        console.error('Error toggling sub-item:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to toggle sub-item' 
         });
     }
 });

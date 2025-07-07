@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import axios from 'axios';
 import dotenv from 'dotenv';
 import GoogleCalendarIntegration from './google-calendar-integration.js';
+import ListManagementSystem from './list-management-system.js';
 
 dotenv.config();
 
@@ -26,6 +27,7 @@ class AITaskAssistant {
         });
         this.baseUrl = baseUrl;
         this.calendarIntegration = new GoogleCalendarIntegration();
+        this.listManagement = new ListManagementSystem(baseUrl);
     }
 
     /**
@@ -34,13 +36,14 @@ class AITaskAssistant {
      * @returns {Object} Analysis result with command type and parameters
      */
     async analyzeTaskCommand(userInput) {
-        const systemPrompt = `You are a command parser for task management and calendar operations. Analyze the user input and determine if it's a task-related or calendar-related command.
+        const systemPrompt = `You are a command parser for task management, list management, and calendar operations. Analyze the user input and determine the type of command.
 
 Response format (JSON only):
 {
   "isTaskCommand": boolean,
+  "isListCommand": boolean,
   "isCalendarCommand": boolean,
-  "action": "add|complete|delete|edit|list|status",
+  "action": "add|complete|delete|edit|list|status|add_item|remove_item|toggle_item|create_list|show_list",
   "taskType": "work|personal",
   "taskText": "text content",
   "taskId": "id if editing/deleting specific task",
@@ -48,9 +51,17 @@ Response format (JSON only):
 }
 
 TASK command examples:
-- "Add 'Review Q4 reports' to my work tasks" → {"isTaskCommand": true, "isCalendarCommand": false, "action": "add", "taskType": "work", "taskText": "Review Q4 reports", "confidence": 95}
-- "Mark 'Call John' as done" → {"isTaskCommand": true, "isCalendarCommand": false, "action": "complete", "taskText": "Call John", "confidence": 90}
-- "What's on my work task list?" → {"isTaskCommand": true, "isCalendarCommand": false, "action": "list", "taskType": "work", "confidence": 95}
+- "Add 'Review Q4 reports' to my work tasks" → {"isTaskCommand": true, "isListCommand": false, "isCalendarCommand": false, "action": "add", "taskType": "work", "taskText": "Review Q4 reports", "confidence": 95}
+- "Mark 'Call John' as done" → {"isTaskCommand": true, "isListCommand": false, "isCalendarCommand": false, "action": "complete", "taskText": "Call John", "confidence": 90}
+- "What's on my work task list?" → {"isTaskCommand": true, "isListCommand": false, "isCalendarCommand": false, "action": "list", "taskType": "work", "confidence": 95}
+
+LIST command examples:
+- "Add apples to grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "add_item", "confidence": 95}
+- "Remove Greek yogurt from grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
+- "Take Greek yogurt off the grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
+- "Mark milk as bought from grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "toggle_item", "confidence": 95}
+- "Show my grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "show_list", "confidence": 95}
+- "What's on my grocery list?" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "show_list", "confidence": 95}
 
 CALENDAR command examples (these should be handled by calendar integration):
 - "Add 'Zoom with Stacy Rankin' to my calendar for today at 4:30" → {"isTaskCommand": false, "isCalendarCommand": true, "confidence": 95}
@@ -58,10 +69,12 @@ CALENDAR command examples (these should be handled by calendar integration):
 - "What's on my calendar today?" → {"isTaskCommand": false, "isCalendarCommand": true, "confidence": 95}
 - "Put client meeting on my calendar for next Friday at 2 PM" → {"isTaskCommand": false, "isCalendarCommand": true, "confidence": 95}
 
-IMPORTANT: Calendar commands should have isCalendarCommand=true and isTaskCommand=false
-Task commands should have isTaskCommand=true and isCalendarCommand=false
+IMPORTANT: 
+- Calendar commands should have isCalendarCommand=true, isTaskCommand=false, isListCommand=false
+- Task commands should have isTaskCommand=true, isCalendarCommand=false, isListCommand=false
+- List commands should have isListCommand=true, isTaskCommand=false, isCalendarCommand=false
 
-If neither task nor calendar command, return: {"isTaskCommand": false, "isCalendarCommand": false, "confidence": 0}`;
+If none of the above, return: {"isTaskCommand": false, "isListCommand": false, "isCalendarCommand": false, "confidence": 0}`;
 
         try {
             const completion = await this.openai.chat.completions.create({
@@ -78,7 +91,7 @@ If neither task nor calendar command, return: {"isTaskCommand": false, "isCalend
             return JSON.parse(response);
         } catch (error) {
             console.error('Error analyzing command:', error);
-            return { isTaskCommand: false, isCalendarCommand: false, confidence: 0 };
+            return { isTaskCommand: false, isListCommand: false, isCalendarCommand: false, confidence: 0 };
         }
     }
 
@@ -854,6 +867,8 @@ If neither task nor calendar command, return: {"isTaskCommand": false, "isCalend
             
             return {
                 isTaskCommand: true,
+                isListCommand: false,
+                isCalendarCommand: false,
                 commandAnalysis: { action: clarificationContext.action },
                 executionResult: result,
                 aiResponse: contextualResponse
@@ -870,6 +885,7 @@ If neither task nor calendar command, return: {"isTaskCommand": false, "isCalend
             
             return {
                 isTaskCommand: false,
+                isListCommand: false,
                 isCalendarCommand: true,
                 commandAnalysis,
                 executionResult: calendarResult,
@@ -877,12 +893,38 @@ If neither task nor calendar command, return: {"isTaskCommand": false, "isCalend
             };
         }
         
+        // Handle list management commands
+        if (commandAnalysis.isListCommand && commandAnalysis.confidence >= 70) {
+            const listResult = await this.listManagement.processListCommand(userInput);
+            
+            // Get current tasks for context
+            const currentTasks = await this.getCurrentTasks();
+            
+            // Generate a contextual AI response
+            const contextualResponse = await this.generateContextualResponse(
+                userInput,
+                commandAnalysis,
+                listResult,
+                currentTasks
+            );
+            
+            return {
+                isTaskCommand: false,
+                isListCommand: true,
+                isCalendarCommand: false,
+                commandAnalysis,
+                executionResult: listResult,
+                aiResponse: contextualResponse
+            };
+        }
+        
         // Handle task commands
         if (!commandAnalysis.isTaskCommand || commandAnalysis.confidence < 70) {
             return {
                 isTaskCommand: false,
+                isListCommand: false,
                 isCalendarCommand: false,
-                message: "This doesn't appear to be a task-related or calendar-related command. Try commands like 'Add task to work list', 'Mark task as done', 'What are my tasks?', or 'Add meeting to my calendar for tomorrow at 2pm'"
+                message: "This doesn't appear to be a task-related, list management, or calendar-related command. Try commands like 'Add task to work list', 'Mark task as done', 'Add apples to grocery list', 'Remove yogurt from shopping list', or 'Add meeting to my calendar for tomorrow at 2pm'"
             };
         }
 
@@ -902,6 +944,8 @@ If neither task nor calendar command, return: {"isTaskCommand": false, "isCalend
 
         return {
             isTaskCommand: true,
+            isListCommand: false,
+            isCalendarCommand: false,
             commandAnalysis,
             executionResult: result,
             aiResponse: contextualResponse
