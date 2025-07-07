@@ -889,6 +889,12 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
         const systemPrompt = `You are a helpful task management assistant. 
         Provide a friendly, conversational response about the task operation that was just performed.
         
+        IMPORTANT CAPABILITY RESTRICTIONS:
+        - You CAN: manage tasks (add, complete, delete, edit, list), provide conversation context, answer questions
+        - You CANNOT: access calendars, send emails, create files, make phone calls, send notifications, access external APIs
+        - NEVER claim to have done something you cannot actually do
+        - Be honest about your limitations and suggest task-based alternatives
+        
         Keep responses concise but helpful. Include relevant context about the user's task list when appropriate.
         
         Current tasks context:
@@ -899,7 +905,7 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
         Command executed: ${command.action}
         Result: ${JSON.stringify(result)}
         
-        Provide a friendly response about what happened.`;
+        Provide a friendly, honest response about what happened. Do not claim capabilities you don't have.`;
 
         try {
             const completion = await this.openai.chat.completions.create({

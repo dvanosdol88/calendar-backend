@@ -9,6 +9,7 @@ import aiTaskRouter from './ai-task-routes.js';
 import AITaskAssistant from './ai-task-assistant.js';
 import ConversationManager from './conversation-manager.js';
 import ContextManager from './context-manager.js';
+import AntiHallucinationFilter from './anti-hallucination-filter.js';
 
 dotenv.config();
 const app = express();
@@ -29,10 +30,11 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// Initialize AI task assistant and conversation memory
+// Initialize AI task assistant, conversation memory, and anti-hallucination filter
 const aiTaskAssistant = new AITaskAssistant();
 const conversationManager = new ConversationManager();
 const contextManager = new ContextManager(conversationManager);
+const antiHallucinationFilter = new AntiHallucinationFilter();
 
 // Initialize conversation manager on startup
 conversationManager.initialize().then(() => {
@@ -71,23 +73,40 @@ app.post('/ask-gpt', async (req, res) => {
     const taskResult = await aiTaskAssistant.processUserInput(prompt, clarificationContext);
     
     if (taskResult.isTaskCommand) {
-      // Add assistant response to conversation
+      // Apply anti-hallucination filter to task response
+      const filteredTaskResponse = antiHallucinationFilter.filterResponse(
+        taskResult.aiResponse, 
+        { strict: true }
+      );
+      
+      // Add filtered assistant response to conversation
       await conversationManager.addMessage(
         conversation.conversationId,
         'assistant',
-        taskResult.aiResponse,
+        filteredTaskResponse.response,
         { 
           taskCommand: true,
-          executionResult: taskResult.executionResult
+          executionResult: taskResult.executionResult,
+          antiHallucinationFilter: {
+            wasFiltered: filteredTaskResponse.wasRewritten,
+            originalResponse: filteredTaskResponse.originalResponse,
+            issues: filteredTaskResponse.issues || [],
+            confidence: filteredTaskResponse.confidence
+          }
         }
       );
       
       // Handle task commands and clarification responses
       const response = {
-        answer: taskResult.aiResponse,
+        answer: filteredTaskResponse.response,
         taskCommand: true,
         executionResult: taskResult.executionResult,
-        conversationId: conversation.conversationId
+        conversationId: conversation.conversationId,
+        antiHallucinationFilter: {
+          wasFiltered: filteredTaskResponse.wasRewritten,
+          confidence: filteredTaskResponse.confidence,
+          issues: filteredTaskResponse.issues || []
+        }
       };
       
       // If the result requires clarification or confirmation, add context for next request
@@ -125,30 +144,89 @@ app.post('/ask-gpt', async (req, res) => {
 
     const assistantResponse = completion.choices[0].message.content;
     
-    // Add assistant response to conversation
+    // Apply anti-hallucination filter to general AI response
+    const filteredGeneralResponse = antiHallucinationFilter.filterResponse(
+      assistantResponse, 
+      { strict: false } // Less strict for general responses
+    );
+    
+    // Add filtered assistant response to conversation
     await conversationManager.addMessage(
       conversation.conversationId,
       'assistant',
-      assistantResponse,
+      filteredGeneralResponse.response,
       {
         tokensUsed: completion.usage?.total_tokens || 0,
         model: 'gpt-3.5-turbo',
-        contextMessagesUsed: context.messagesIncluded
+        contextMessagesUsed: context.messagesIncluded,
+        antiHallucinationFilter: {
+          wasFiltered: filteredGeneralResponse.wasRewritten,
+          originalResponse: filteredGeneralResponse.originalResponse,
+          issues: filteredGeneralResponse.issues || [],
+          confidence: filteredGeneralResponse.confidence
+        }
       }
     );
 
     res.send({ 
-      answer: assistantResponse,
+      answer: filteredGeneralResponse.response,
       conversationId: conversation.conversationId,
       taskCommand: false,
       metadata: {
         tokensUsed: completion.usage?.total_tokens || 0,
         contextSize: context.messagesIncluded
+      },
+      antiHallucinationFilter: {
+        wasFiltered: filteredGeneralResponse.wasRewritten,
+        confidence: filteredGeneralResponse.confidence,
+        issues: filteredGeneralResponse.issues || []
       }
     });
   } catch (err) {
     console.error("🔥 FULL ERROR:", err); // This line helps see errors on Render
     res.status(500).send({ error: "Error communicating with GPT." });
+  }
+});
+
+// Anti-Hallucination Filter Endpoints
+
+// Get system capabilities and filter status
+app.get('/api/capabilities', (req, res) => {
+  try {
+    const capabilities = antiHallucinationFilter.getCapabilitiesSummary();
+    res.json({
+      capabilities,
+      filterEnabled: true,
+      filterVersion: '1.0.0',
+      description: 'Anti-hallucination filter prevents AI from claiming capabilities it does not have'
+    });
+  } catch (error) {
+    console.error('Error fetching capabilities:', error);
+    res.status(500).json({ error: 'Failed to fetch capabilities' });
+  }
+});
+
+// Test endpoint for anti-hallucination filter
+app.post('/api/test-filter', (req, res) => {
+  const { text, strict = true } = req.body;
+  if (!text) return res.status(400).send({ error: "No text provided." });
+  
+  try {
+    const result = antiHallucinationFilter.filterResponse(text, { strict });
+    res.json({
+      originalText: text,
+      filteredText: result.response,
+      wasFiltered: result.wasRewritten,
+      issues: result.issues || [],
+      confidence: result.confidence || 100,
+      filterMetadata: {
+        strict,
+        timestamp: new Date().toISOString()
+      }
+    });
+  } catch (error) {
+    console.error('Error testing filter:', error);
+    res.status(500).json({ error: 'Failed to test filter' });
   }
 });
 
