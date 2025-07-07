@@ -194,6 +194,28 @@ app.post('/ask-gpt', async (req, res) => {
   }
 });
 
+// Debug endpoint for command analysis
+app.post('/api/debug/analyze-command', async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) return res.status(400).send({ error: "No prompt provided." });
+  
+  try {
+    const analysis = await aiTaskAssistant.analyzeTaskCommand(prompt);
+    res.json({
+      input: prompt,
+      analysis,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Debug analysis error:', error);
+    res.status(500).json({ 
+      error: 'Failed to analyze command',
+      details: error.message,
+      input: prompt
+    });
+  }
+});
+
 // Anti-Hallucination Filter Endpoints
 
 // Get system capabilities and filter status

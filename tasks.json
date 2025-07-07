@@ -1,0 +1,41 @@
+{
+  "work": [],
+  "personal": [
+    {
+      "id": "1751895069077",
+      "text": "Shopping List: milk, bread, eggs",
+      "completed": false,
+      "created": "2025-07-07T13:31:09.077Z",
+      "subItems": []
+    },
+    {
+      "id": "1751895069090",
+      "text": "Reading List",
+      "completed": false,
+      "created": "2025-07-07T13:31:09.090Z",
+      "subItems": [
+        {
+          "id": "1751895069091wboisx0e5bs",
+          "text": "To Kill a Mockingbird",
+          "completed": false,
+          "addedAt": "2025-07-07T13:31:09.091Z"
+        },
+        {
+          "id": "17518950690917guq22bzu79",
+          "text": "1984",
+          "completed": true,
+          "addedAt": "2025-07-07T13:31:09.091Z",
+          "updatedAt": "2025-07-07T13:31:09.119Z"
+        },
+        {
+          "id": "175189506910678d8yqwgubu",
+          "text": "Animal Farm",
+          "completed": false,
+          "addedAt": "2025-07-07T13:31:09.106Z"
+        }
+      ],
+      "lastModified": "2025-07-07T13:31:09.131Z"
+    }
+  ],
+  "lastUpdated": "2025-07-07T13:31:09.131Z"
+}
