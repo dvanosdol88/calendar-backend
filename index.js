@@ -90,13 +90,22 @@ app.post('/ask-gpt', async (req, res) => {
         conversationId: conversation.conversationId
       };
       
-      // If the result requires clarification, add clarification context for next request
+      // If the result requires clarification or confirmation, add context for next request
       if (taskResult.executionResult.requiresClarification) {
         response.requiresClarification = true;
         response.clarificationContext = {
           action: taskResult.commandAnalysis.action,
           matches: taskResult.executionResult.matches,
           newText: taskResult.commandAnalysis.newText || taskResult.commandAnalysis.taskText
+        };
+      } else if (taskResult.executionResult.requiresConfirmation) {
+        response.requiresConfirmation = true;
+        response.clarificationContext = {
+          action: taskResult.commandAnalysis.action,
+          matches: taskResult.executionResult.matches,
+          newText: taskResult.commandAnalysis.newText || taskResult.commandAnalysis.taskText,
+          requiresConfirmation: true,
+          confidence: taskResult.executionResult.confidence
         };
       }
       

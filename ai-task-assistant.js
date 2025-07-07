@@ -87,18 +87,18 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
     }
 
     /**
-     * Finds tasks by partial text match with semantic similarity
+     * Finds tasks by text match with enhanced confidence scoring and confirmation
      * @param {string} searchText - Text to search for in task descriptions
      * @param {string} taskType - 'work' or 'personal' (optional)
-     * @returns {Object} Result with matches: { found: boolean, matches: Array, ambiguous: boolean }
+     * @returns {Object} Result with matches: { found: boolean, matches: Array, ambiguous: boolean, requiresConfirmation: boolean }
      */
     async findTasksByText(searchText, taskType = null) {
         try {
             const response = await axios.get(`${this.baseUrl}/api/tasks`);
             const allTasks = response.data.data;
             
-            const searchLower = searchText.toLowerCase();
-            const searchWords = searchLower.split(' ').filter(word => word.length > 2);
+            const searchLower = searchText.toLowerCase().trim();
+            const searchWords = searchLower.split(/\s+/).filter(word => word.length > 2);
             
             // Search in specified type or both types
             const typesToSearch = taskType ? [taskType] : ['work', 'personal'];
@@ -109,43 +109,180 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
                 const tasks = allTasks[type] || [];
                 
                 for (const task of tasks) {
-                    const taskLower = task.text.toLowerCase();
-                    let score = 0;
+                    const taskLower = task.text.toLowerCase().trim();
+                    const taskWords = taskLower.split(/\s+/);
+                    let confidence = this.calculateMatchConfidence(searchLower, searchWords, taskLower, taskWords);
                     
-                    // Exact substring match gets highest score
-                    if (taskLower.includes(searchLower)) {
-                        score = 100;
-                    } else {
-                        // Word-based matching for partial matches
-                        for (const word of searchWords) {
-                            if (taskLower.includes(word)) {
-                                score += 20;
-                            }
-                        }
+                    // Debug logging for confidence calculation
+                    if (process.env.NODE_ENV === 'development' || process.env.DEBUG_MATCHING) {
+                        console.log(`🔍 Matching "${searchLower}" against "${taskLower}" - Confidence: ${confidence}%`);
                     }
                     
-                    if (score > 0) {
+                    if (confidence > 0) {
                         matches.push({
                             ...task,
                             type,
-                            score
+                            confidence,
+                            matchDetails: this.getMatchDetails(searchLower, searchWords, taskLower, taskWords)
                         });
                     }
                 }
             }
             
-            // Sort by score (highest first)
-            matches.sort((a, b) => b.score - a.score);
+            // Sort by confidence (highest first)
+            matches.sort((a, b) => b.confidence - a.confidence);
+            
+            // Determine if confirmation is needed
+            const highestConfidence = matches.length > 0 ? matches[0].confidence : 0;
+            const requiresConfirmation = matches.length > 0 && highestConfidence < 90;
             
             return {
                 found: matches.length > 0,
                 matches,
-                ambiguous: matches.length > 1
+                ambiguous: matches.length > 1,
+                requiresConfirmation,
+                highestConfidence
             };
         } catch (error) {
             console.error('Error finding tasks:', error);
-            return { found: false, matches: [], ambiguous: false };
+            return { found: false, matches: [], ambiguous: false, requiresConfirmation: false };
         }
+    }
+
+    /**
+     * Calculates match confidence score with strict thresholds
+     * @param {string} searchText - Original search text (lowercase)
+     * @param {Array} searchWords - Array of search words
+     * @param {string} taskText - Task text (lowercase)
+     * @param {Array} taskWords - Array of task words
+     * @returns {number} Confidence score (0-100)
+     */
+    calculateMatchConfidence(searchText, searchWords, taskText, taskWords) {
+        // Exact match gets 100 points
+        if (searchText === taskText) {
+            return 100;
+        }
+        
+        // Exact substring match gets 95 points
+        if (taskText.includes(searchText)) {
+            return 95;
+        }
+        
+        // Check if search text is contained within task text with minor variations
+        if (this.isSubstringWithVariations(searchText, taskText)) {
+            return 90;
+        }
+        
+        let score = 0;
+        const searchWordSet = new Set(searchWords);
+        const taskWordSet = new Set(taskWords);
+        
+        // Calculate word-based scoring
+        let exactWordMatches = 0;
+        let partialWordMatches = 0;
+        
+        for (const searchWord of searchWords) {
+            let wordFound = false;
+            
+            // Check for exact word match
+            if (taskWordSet.has(searchWord)) {
+                exactWordMatches++;
+                wordFound = true;
+            } else {
+                // Check for partial word matches (substring)
+                for (const taskWord of taskWords) {
+                    if (taskWord.includes(searchWord) || searchWord.includes(taskWord)) {
+                        partialWordMatches++;
+                        wordFound = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Calculate percentage of search words found
+        const wordMatchPercentage = (exactWordMatches + partialWordMatches * 0.7) / searchWords.length;
+        
+        // All words found gets high score
+        if (exactWordMatches === searchWords.length) {
+            score = 85;
+        } else if (wordMatchPercentage >= 0.8) {
+            score = 70;
+        } else if (wordMatchPercentage >= 0.6) {
+            score = 50;
+        } else if (wordMatchPercentage >= 0.4) {
+            score = 30;
+        } else if (wordMatchPercentage > 0) {
+            score = 15;
+        }
+        
+        // Bonus for word order preservation
+        if (score > 0 && this.hasPreservedWordOrder(searchWords, taskWords)) {
+            score += 10;
+        }
+        
+        // Penalty for significant length difference
+        const lengthRatio = Math.min(searchText.length, taskText.length) / Math.max(searchText.length, taskText.length);
+        if (lengthRatio < 0.3) {
+            score *= 0.8;
+        }
+        
+        return Math.round(score);
+    }
+
+    /**
+     * Checks if search text is a substring with minor variations (punctuation, etc.)
+     */
+    isSubstringWithVariations(searchText, taskText) {
+        // Remove punctuation and extra spaces for comparison
+        const normalizeText = (text) => text.replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
+        const normalizedSearch = normalizeText(searchText);
+        const normalizedTask = normalizeText(taskText);
+        
+        return normalizedTask.includes(normalizedSearch);
+    }
+
+    /**
+     * Checks if word order is preserved between search and task
+     */
+    hasPreservedWordOrder(searchWords, taskWords) {
+        let searchIndex = 0;
+        
+        for (const taskWord of taskWords) {
+            if (searchIndex < searchWords.length && taskWord.includes(searchWords[searchIndex])) {
+                searchIndex++;
+            }
+        }
+        
+        return searchIndex === searchWords.length;
+    }
+
+    /**
+     * Gets detailed match information for debugging/display
+     */
+    getMatchDetails(searchText, searchWords, taskText, taskWords) {
+        const details = {
+            exactMatch: searchText === taskText,
+            substringMatch: taskText.includes(searchText),
+            wordsFound: [],
+            wordsNotFound: []
+        };
+        
+        for (const searchWord of searchWords) {
+            let found = false;
+            for (const taskWord of taskWords) {
+                if (taskWord.includes(searchWord) || searchWord.includes(taskWord)) {
+                    details.wordsFound.push(searchWord);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                details.wordsNotFound.push(searchWord);
+            }
+        }
+        
+        return details;
     }
 
     /**
@@ -226,7 +363,7 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
     }
 
     /**
-     * Marks a task as complete with ambiguity resolution
+     * Marks a task as complete with enhanced confidence checking and confirmation
      */
     async completeTask(taskText, taskType = null) {
         const searchResult = await this.findTasksByText(taskText, taskType);
@@ -234,14 +371,36 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
         if (!searchResult.found) {
             return {
                 success: false,
-                message: `Could not find task containing "${taskText}"`
+                message: `Could not find any task matching "${taskText}". Please check the task text and try again.`
             };
         }
 
-        // Handle ambiguous matches by asking for clarification
-        if (searchResult.ambiguous) {
+        const bestMatch = searchResult.matches[0];
+        const confidence = bestMatch.confidence;
+        
+        // High confidence (90%+) - proceed automatically
+        if (confidence >= 90 && !searchResult.ambiguous) {
+            try {
+                const response = await axios.patch(`${this.baseUrl}/api/tasks/${bestMatch.type}/${bestMatch.id}/toggle`);
+                
+                return {
+                    success: true,
+                    message: `Marked "${bestMatch.text}" as ${response.data.data.completed ? 'completed' : 'incomplete'} (${confidence}% confidence)`,
+                    data: response.data.data,
+                    confidence
+                };
+            } catch (error) {
+                return {
+                    success: false,
+                    message: `Failed to update task: ${error.response?.data?.error || error.message}`
+                };
+            }
+        }
+        
+        // Handle ambiguous matches (multiple high-confidence matches)
+        if (searchResult.ambiguous && searchResult.matches.filter(m => m.confidence >= 70).length > 1) {
             const options = searchResult.matches.slice(0, 5).map((task, index) => 
-                `${String.fromCharCode(65 + index)}. ${task.text} (${task.type})`
+                `${String.fromCharCode(65 + index)}. ${task.text} (${task.type}) - ${task.confidence}% confidence`
             ).join('\n');
             
             return {
@@ -251,8 +410,19 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
                 matches: searchResult.matches
             };
         }
+        
+        // Low confidence (<90%) - require confirmation
+        if (confidence < 90) {
+            return {
+                success: false,
+                requiresConfirmation: true,
+                message: `Found potential match: "${bestMatch.text}" (${bestMatch.type}) with ${confidence}% confidence.\n\nMark this task as complete? [Y/N]`,
+                matches: [bestMatch],
+                confidence
+            };
+        }
 
-        // Single match - proceed with completion
+        // Fallback - single match with good confidence
         const task = searchResult.matches[0];
         
         try {
@@ -260,8 +430,9 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
             
             return {
                 success: true,
-                message: `Marked "${task.text}" as ${response.data.data.completed ? 'completed' : 'incomplete'}`,
-                data: response.data.data
+                message: `Marked "${task.text}" as ${response.data.data.completed ? 'completed' : 'incomplete'} (${confidence}% confidence)`,
+                data: response.data.data,
+                confidence
             };
         } catch (error) {
             return {
@@ -272,7 +443,7 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
     }
 
     /**
-     * Deletes a task with ambiguity resolution
+     * Deletes a task with enhanced confidence checking and confirmation
      */
     async deleteTask(taskText, taskType = null) {
         const searchResult = await this.findTasksByText(taskText, taskType);
@@ -280,14 +451,36 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
         if (!searchResult.found) {
             return {
                 success: false,
-                message: `Could not find task containing "${taskText}"`
+                message: `Could not find any task matching "${taskText}". Please check the task text and try again.`
             };
         }
 
-        // Handle ambiguous matches by asking for clarification
-        if (searchResult.ambiguous) {
+        const bestMatch = searchResult.matches[0];
+        const confidence = bestMatch.confidence;
+        
+        // High confidence (90%+) - proceed automatically
+        if (confidence >= 90 && !searchResult.ambiguous) {
+            try {
+                const response = await axios.delete(`${this.baseUrl}/api/tasks/${bestMatch.type}/${bestMatch.id}`);
+                
+                return {
+                    success: true,
+                    message: `Deleted task: "${bestMatch.text}" (${confidence}% confidence)`,
+                    data: response.data.data,
+                    confidence
+                };
+            } catch (error) {
+                return {
+                    success: false,
+                    message: `Failed to delete task: ${error.response?.data?.error || error.message}`
+                };
+            }
+        }
+        
+        // Handle ambiguous matches (multiple high-confidence matches)
+        if (searchResult.ambiguous && searchResult.matches.filter(m => m.confidence >= 70).length > 1) {
             const options = searchResult.matches.slice(0, 5).map((task, index) => 
-                `${String.fromCharCode(65 + index)}. ${task.text} (${task.type})`
+                `${String.fromCharCode(65 + index)}. ${task.text} (${task.type}) - ${task.confidence}% confidence`
             ).join('\n');
             
             return {
@@ -297,8 +490,19 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
                 matches: searchResult.matches
             };
         }
+        
+        // Low confidence (<90%) - require confirmation
+        if (confidence < 90) {
+            return {
+                success: false,
+                requiresConfirmation: true,
+                message: `Found potential match: "${bestMatch.text}" (${bestMatch.type}) with ${confidence}% confidence.\n\nDelete this task? [Y/N]`,
+                matches: [bestMatch],
+                confidence
+            };
+        }
 
-        // Single match - proceed with deletion
+        // Fallback - single match with good confidence
         const task = searchResult.matches[0];
 
         try {
@@ -306,8 +510,9 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
             
             return {
                 success: true,
-                message: `Deleted task: "${task.text}"`,
-                data: response.data.data
+                message: `Deleted task: "${task.text}" (${confidence}% confidence)`,
+                data: response.data.data,
+                confidence
             };
         } catch (error) {
             return {
@@ -318,7 +523,7 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
     }
 
     /**
-     * Edits a task's text with ambiguity resolution
+     * Edits a task's text with enhanced confidence checking and confirmation
      */
     async editTask(oldText, newText, taskType = null) {
         const searchResult = await this.findTasksByText(oldText, taskType);
@@ -326,14 +531,38 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
         if (!searchResult.found) {
             return {
                 success: false,
-                message: `Could not find task containing "${oldText}"`
+                message: `Could not find any task matching "${oldText}". Please check the task text and try again.`
             };
         }
 
-        // Handle ambiguous matches by asking for clarification
-        if (searchResult.ambiguous) {
+        const bestMatch = searchResult.matches[0];
+        const confidence = bestMatch.confidence;
+        
+        // High confidence (90%+) - proceed automatically
+        if (confidence >= 90 && !searchResult.ambiguous) {
+            try {
+                const response = await axios.patch(`${this.baseUrl}/api/tasks/${bestMatch.type}/${bestMatch.id}`, {
+                    text: newText
+                });
+                
+                return {
+                    success: true,
+                    message: `Updated task from "${bestMatch.text}" to "${newText}" (${confidence}% confidence)`,
+                    data: response.data.data,
+                    confidence
+                };
+            } catch (error) {
+                return {
+                    success: false,
+                    message: `Failed to edit task: ${error.response?.data?.error || error.message}`
+                };
+            }
+        }
+        
+        // Handle ambiguous matches (multiple high-confidence matches)
+        if (searchResult.ambiguous && searchResult.matches.filter(m => m.confidence >= 70).length > 1) {
             const options = searchResult.matches.slice(0, 5).map((task, index) => 
-                `${String.fromCharCode(65 + index)}. ${task.text} (${task.type})`
+                `${String.fromCharCode(65 + index)}. ${task.text} (${task.type}) - ${task.confidence}% confidence`
             ).join('\n');
             
             return {
@@ -343,8 +572,19 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
                 matches: searchResult.matches
             };
         }
+        
+        // Low confidence (<90%) - require confirmation
+        if (confidence < 90) {
+            return {
+                success: false,
+                requiresConfirmation: true,
+                message: `Found potential match: "${bestMatch.text}" (${bestMatch.type}) with ${confidence}% confidence.\n\nEdit this task to "${newText}"? [Y/N]`,
+                matches: [bestMatch],
+                confidence
+            };
+        }
 
-        // Single match - proceed with edit
+        // Fallback - single match with good confidence
         const task = searchResult.matches[0];
 
         try {
@@ -354,8 +594,9 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
             
             return {
                 success: true,
-                message: `Updated task from "${task.text}" to "${newText}"`,
-                data: response.data.data
+                message: `Updated task from "${task.text}" to "${newText}" (${confidence}% confidence)`,
+                data: response.data.data,
+                confidence
             };
         } catch (error) {
             return {
@@ -412,6 +653,83 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
             return {
                 success: false,
                 message: `Failed to get task status: ${error.response?.data?.error || error.message}`
+            };
+        }
+    }
+
+    /**
+     * Handles confirmation responses (Y/N) for low-confidence matches
+     * @param {string} confirmationResponse - User's response (Y/N, Yes/No)
+     * @param {Array} matches - Array of task matches from previous confirmation request
+     * @param {string} originalAction - The original action (complete, delete, edit)
+     * @param {string} newText - For edit commands, the new text
+     * @returns {Object} Result of the confirmed command
+     */
+    async handleConfirmationResponse(confirmationResponse, matches, originalAction, newText = null) {
+        const response = confirmationResponse.toLowerCase().trim();
+        const isYes = ['y', 'yes', 'true', '1', 'confirm'].includes(response);
+        const isNo = ['n', 'no', 'false', '0', 'cancel', 'abort'].includes(response);
+        
+        if (!isYes && !isNo) {
+            return {
+                success: false,
+                message: `Please respond with 'Y' for Yes or 'N' for No. You responded: "${confirmationResponse}"`
+            };
+        }
+        
+        if (isNo) {
+            return {
+                success: false,
+                message: 'Task operation cancelled. Please try with a more specific task description.'
+            };
+        }
+        
+        // User confirmed - proceed with the action
+        const selectedTask = matches[0];
+        
+        try {
+            switch (originalAction) {
+                case 'complete':
+                    const response = await axios.patch(`${this.baseUrl}/api/tasks/${selectedTask.type}/${selectedTask.id}/toggle`);
+                    return {
+                        success: true,
+                        message: `Confirmed: Marked "${selectedTask.text}" as ${response.data.data.completed ? 'completed' : 'incomplete'}`,
+                        data: response.data.data
+                    };
+                
+                case 'delete':
+                    await axios.delete(`${this.baseUrl}/api/tasks/${selectedTask.type}/${selectedTask.id}`);
+                    return {
+                        success: true,
+                        message: `Confirmed: Deleted task "${selectedTask.text}"`
+                    };
+                
+                case 'edit':
+                    if (!newText) {
+                        return {
+                            success: false,
+                            message: 'New text is required for edit operation'
+                        };
+                    }
+                    const editResponse = await axios.patch(`${this.baseUrl}/api/tasks/${selectedTask.type}/${selectedTask.id}`, {
+                        text: newText
+                    });
+                    return {
+                        success: true,
+                        message: `Confirmed: Updated task from "${selectedTask.text}" to "${newText}"`,
+                        data: editResponse.data.data
+                    };
+                
+                default:
+                    return {
+                        success: false,
+                        message: `Unknown action: ${originalAction}`
+                    };
+            }
+        } catch (error) {
+            return {
+                success: false,
+                message: `Failed to ${originalAction} task: ${error.response?.data?.error || error.message}`
             };
         }
     }
@@ -491,14 +809,30 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
      * @returns {Object} AI response with task execution results
      */
     async processUserInput(userInput, clarificationContext = null) {
-        // Handle clarification responses
+        // Handle clarification/confirmation responses
         if (clarificationContext) {
-            const result = await this.handleClarificationResponse(
-                userInput,
-                clarificationContext.matches,
-                clarificationContext.action,
-                clarificationContext.newText
-            );
+            let result;
+            
+            // Check if this is a confirmation response (Y/N) or clarification response (A/B/C)
+            const isConfirmationResponse = clarificationContext.requiresConfirmation ||
+                /^[yn]$/i.test(userInput.trim()) ||
+                /^(yes|no|true|false|confirm|cancel|abort)$/i.test(userInput.trim());
+            
+            if (isConfirmationResponse) {
+                result = await this.handleConfirmationResponse(
+                    userInput,
+                    clarificationContext.matches,
+                    clarificationContext.action,
+                    clarificationContext.newText
+                );
+            } else {
+                result = await this.handleClarificationResponse(
+                    userInput,
+                    clarificationContext.matches,
+                    clarificationContext.action,
+                    clarificationContext.newText
+                );
+            }
             
             const currentTasks = await this.getCurrentTasks();
             const contextualResponse = await this.generateContextualResponse(
