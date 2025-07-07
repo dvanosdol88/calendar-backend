@@ -220,19 +220,46 @@ class AntiHallucinationFilter {
      * Extracts key information from false claims for rewriting
      * @param {string} response - The original response
      * @param {Array} issues - Detected issues
+     * @param {string} originalPrompt - The user's original prompt
      * @returns {Object} Extracted information for alternatives
      */
-    extractClaimInfo(response, issues) {
+    extractClaimInfo(response, issues, originalPrompt = '') {
         const info = {};
         
         for (const issue of issues) {
             switch (issue.capability) {
                 case 'calendarIntegration':
-                    // Extract event/meeting details
-                    const eventMatch = response.match(/['"]([^'"]*(?:meeting|event|appointment|call)[^'"]*)['"]|(?:meeting|event|appointment|call)(?:\s+with\s+)?(?:\s+about\s+)?([^,.!?\n]*)/i);
-                    if (eventMatch) {
-                        info.event = eventMatch[1] || eventMatch[2] || 'calendar event';
+                    // Extract event/meeting details, prioritizing original user input
+                    let eventText = 'calendar event';
+                    
+                    // First try to extract from user's original prompt
+                    if (originalPrompt) {
+                        const userEventMatch = originalPrompt.match(/(?:add|create|schedule|book)?\s*['"]?([^'"]*(?:meeting|event|appointment|call|zoom|conference)[^'",.\n]*?)['"]?(?:\s+(?:to|for|on|at|today|tomorrow))?/i);
+                        if (userEventMatch && userEventMatch[1]) {
+                            eventText = userEventMatch[1].trim();
+                        } else {
+                            // Try to extract quoted content from user input
+                            const userQuotedMatch = originalPrompt.match(/['"]([^'"]+)['"]|"([^"]+)"/);
+                            if (userQuotedMatch) {
+                                eventText = userQuotedMatch[1] || userQuotedMatch[2];
+                            }
+                        }
                     }
+                    
+                    // If still no match, try the AI response
+                    if (eventText === 'calendar event') {
+                        const quotedMatch = response.match(/['"]([^'"]+)['"]|"([^"]+)"/);
+                        if (quotedMatch) {
+                            eventText = quotedMatch[1] || quotedMatch[2];
+                        } else {
+                            const patternMatch = response.match(/(?:meeting|event|appointment|call|zoom|conference)\s+(?:with\s+)?([^,.!?\n]+)/i);
+                            if (patternMatch) {
+                                eventText = patternMatch[0].trim();
+                            }
+                        }
+                    }
+                    
+                    info.event = eventText;
                     break;
                     
                 case 'emailSending':
@@ -350,7 +377,7 @@ class AntiHallucinationFilter {
             };
         }
         
-        const extractedInfo = this.extractClaimInfo(response, analysis.issues);
+        const extractedInfo = this.extractClaimInfo(response, analysis.issues, options.originalPrompt);
         
         // Determine if rewrite is necessary
         const shouldRewrite = analysis.requiresRewrite || options.strict === true;

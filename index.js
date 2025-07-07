@@ -80,7 +80,7 @@ app.post('/ask-gpt', async (req, res) => {
       // Apply anti-hallucination filter to task response
       const filteredTaskResponse = antiHallucinationFilter.filterResponse(
         taskResult.aiResponse, 
-        { strict: true }
+        { strict: true, originalPrompt: prompt }
       );
       
       // Add filtered assistant response to conversation
