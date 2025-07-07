@@ -87,37 +87,76 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
     }
 
     /**
-     * Finds a task by partial text match
+     * Finds tasks by partial text match with semantic similarity
      * @param {string} searchText - Text to search for in task descriptions
      * @param {string} taskType - 'work' or 'personal' (optional)
-     * @returns {Object|null} Found task or null
+     * @returns {Object} Result with matches: { found: boolean, matches: Array, ambiguous: boolean }
      */
-    async findTaskByText(searchText, taskType = null) {
+    async findTasksByText(searchText, taskType = null) {
         try {
             const response = await axios.get(`${this.baseUrl}/api/tasks`);
             const allTasks = response.data.data;
             
             const searchLower = searchText.toLowerCase();
+            const searchWords = searchLower.split(' ').filter(word => word.length > 2);
             
             // Search in specified type or both types
             const typesToSearch = taskType ? [taskType] : ['work', 'personal'];
             
+            let matches = [];
+            
             for (const type of typesToSearch) {
                 const tasks = allTasks[type] || [];
-                const found = tasks.find(task => 
-                    task.text.toLowerCase().includes(searchLower)
-                );
                 
-                if (found) {
-                    return { ...found, type };
+                for (const task of tasks) {
+                    const taskLower = task.text.toLowerCase();
+                    let score = 0;
+                    
+                    // Exact substring match gets highest score
+                    if (taskLower.includes(searchLower)) {
+                        score = 100;
+                    } else {
+                        // Word-based matching for partial matches
+                        for (const word of searchWords) {
+                            if (taskLower.includes(word)) {
+                                score += 20;
+                            }
+                        }
+                    }
+                    
+                    if (score > 0) {
+                        matches.push({
+                            ...task,
+                            type,
+                            score
+                        });
+                    }
                 }
             }
             
-            return null;
+            // Sort by score (highest first)
+            matches.sort((a, b) => b.score - a.score);
+            
+            return {
+                found: matches.length > 0,
+                matches,
+                ambiguous: matches.length > 1
+            };
         } catch (error) {
-            console.error('Error finding task:', error);
-            return null;
+            console.error('Error finding tasks:', error);
+            return { found: false, matches: [], ambiguous: false };
         }
+    }
+
+    /**
+     * Finds a task by partial text match (backward compatibility)
+     * @param {string} searchText - Text to search for in task descriptions
+     * @param {string} taskType - 'work' or 'personal' (optional)
+     * @returns {Object|null} Found task or null
+     */
+    async findTaskByText(searchText, taskType = null) {
+        const result = await this.findTasksByText(searchText, taskType);
+        return result.found ? result.matches[0] : null;
     }
 
     /**
@@ -187,18 +226,35 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
     }
 
     /**
-     * Marks a task as complete
+     * Marks a task as complete with ambiguity resolution
      */
     async completeTask(taskText, taskType = null) {
-        const task = await this.findTaskByText(taskText, taskType);
+        const searchResult = await this.findTasksByText(taskText, taskType);
         
-        if (!task) {
+        if (!searchResult.found) {
             return {
                 success: false,
                 message: `Could not find task containing "${taskText}"`
             };
         }
 
+        // Handle ambiguous matches by asking for clarification
+        if (searchResult.ambiguous) {
+            const options = searchResult.matches.slice(0, 5).map((task, index) => 
+                `${String.fromCharCode(65 + index)}. ${task.text} (${task.type})`
+            ).join('\n');
+            
+            return {
+                success: false,
+                requiresClarification: true,
+                message: `Multiple tasks match "${taskText}". Which one would you like to mark as complete?\n\n${options}`,
+                matches: searchResult.matches
+            };
+        }
+
+        // Single match - proceed with completion
+        const task = searchResult.matches[0];
+        
         try {
             const response = await axios.patch(`${this.baseUrl}/api/tasks/${task.type}/${task.id}/toggle`);
             
@@ -216,17 +272,34 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
     }
 
     /**
-     * Deletes a task
+     * Deletes a task with ambiguity resolution
      */
     async deleteTask(taskText, taskType = null) {
-        const task = await this.findTaskByText(taskText, taskType);
+        const searchResult = await this.findTasksByText(taskText, taskType);
         
-        if (!task) {
+        if (!searchResult.found) {
             return {
                 success: false,
                 message: `Could not find task containing "${taskText}"`
             };
         }
+
+        // Handle ambiguous matches by asking for clarification
+        if (searchResult.ambiguous) {
+            const options = searchResult.matches.slice(0, 5).map((task, index) => 
+                `${String.fromCharCode(65 + index)}. ${task.text} (${task.type})`
+            ).join('\n');
+            
+            return {
+                success: false,
+                requiresClarification: true,
+                message: `Multiple tasks match "${taskText}". Which one would you like to delete?\n\n${options}`,
+                matches: searchResult.matches
+            };
+        }
+
+        // Single match - proceed with deletion
+        const task = searchResult.matches[0];
 
         try {
             const response = await axios.delete(`${this.baseUrl}/api/tasks/${task.type}/${task.id}`);
@@ -245,17 +318,34 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
     }
 
     /**
-     * Edits a task's text
+     * Edits a task's text with ambiguity resolution
      */
     async editTask(oldText, newText, taskType = null) {
-        const task = await this.findTaskByText(oldText, taskType);
+        const searchResult = await this.findTasksByText(oldText, taskType);
         
-        if (!task) {
+        if (!searchResult.found) {
             return {
                 success: false,
                 message: `Could not find task containing "${oldText}"`
             };
         }
+
+        // Handle ambiguous matches by asking for clarification
+        if (searchResult.ambiguous) {
+            const options = searchResult.matches.slice(0, 5).map((task, index) => 
+                `${String.fromCharCode(65 + index)}. ${task.text} (${task.type})`
+            ).join('\n');
+            
+            return {
+                success: false,
+                requiresClarification: true,
+                message: `Multiple tasks match "${oldText}". Which one would you like to edit?\n\n${options}`,
+                matches: searchResult.matches
+            };
+        }
+
+        // Single match - proceed with edit
+        const task = searchResult.matches[0];
 
         try {
             const response = await axios.patch(`${this.baseUrl}/api/tasks/${task.type}/${task.id}`, {
@@ -264,7 +354,7 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
             
             return {
                 success: true,
-                message: `Updated task from "${oldText}" to "${newText}"`,
+                message: `Updated task from "${task.text}" to "${newText}"`,
                 data: response.data.data
             };
         } catch (error) {
@@ -327,11 +417,105 @@ If not a task command, return: {"isTaskCommand": false, "confidence": 0}`;
     }
 
     /**
+     * Handles clarification responses (A, B, C, etc.)
+     * @param {string} clarificationResponse - User's choice (A, B, C, etc.)
+     * @param {Array} matches - Array of task matches from previous clarification
+     * @param {string} originalAction - The original action (complete, delete, edit)
+     * @param {string} newText - For edit commands, the new text
+     * @returns {Object} Result of the clarified command
+     */
+    async handleClarificationResponse(clarificationResponse, matches, originalAction, newText = null) {
+        const choice = clarificationResponse.toUpperCase().trim();
+        const choiceIndex = choice.charCodeAt(0) - 65; // Convert A=0, B=1, etc.
+        
+        if (choiceIndex < 0 || choiceIndex >= matches.length) {
+            return {
+                success: false,
+                message: `Invalid choice "${choice}". Please choose from A-${String.fromCharCode(65 + matches.length - 1)}.`
+            };
+        }
+        
+        const selectedTask = matches[choiceIndex];
+        
+        try {
+            switch (originalAction) {
+                case 'complete':
+                    const response = await axios.patch(`${this.baseUrl}/api/tasks/${selectedTask.type}/${selectedTask.id}/toggle`);
+                    return {
+                        success: true,
+                        message: `Marked "${selectedTask.text}" as ${response.data.data.completed ? 'completed' : 'incomplete'}`,
+                        data: response.data.data
+                    };
+                
+                case 'delete':
+                    await axios.delete(`${this.baseUrl}/api/tasks/${selectedTask.type}/${selectedTask.id}`);
+                    return {
+                        success: true,
+                        message: `Deleted task: "${selectedTask.text}"`
+                    };
+                
+                case 'edit':
+                    if (!newText) {
+                        return {
+                            success: false,
+                            message: 'New text is required for edit operation'
+                        };
+                    }
+                    const editResponse = await axios.patch(`${this.baseUrl}/api/tasks/${selectedTask.type}/${selectedTask.id}`, {
+                        text: newText
+                    });
+                    return {
+                        success: true,
+                        message: `Updated task from "${selectedTask.text}" to "${newText}"`,
+                        data: editResponse.data.data
+                    };
+                
+                default:
+                    return {
+                        success: false,
+                        message: `Unknown action: ${originalAction}`
+                    };
+            }
+        } catch (error) {
+            return {
+                success: false,
+                message: `Failed to ${originalAction} task: ${error.response?.data?.error || error.message}`
+            };
+        }
+    }
+
+    /**
      * Processes user input and returns an AI-enhanced response
      * @param {string} userInput - The user's natural language input
+     * @param {Object} clarificationContext - Optional context from previous clarification
      * @returns {Object} AI response with task execution results
      */
-    async processUserInput(userInput) {
+    async processUserInput(userInput, clarificationContext = null) {
+        // Handle clarification responses
+        if (clarificationContext) {
+            const result = await this.handleClarificationResponse(
+                userInput,
+                clarificationContext.matches,
+                clarificationContext.action,
+                clarificationContext.newText
+            );
+            
+            const currentTasks = await this.getCurrentTasks();
+            const contextualResponse = await this.generateContextualResponse(
+                userInput,
+                { action: clarificationContext.action },
+                result,
+                currentTasks
+            );
+            
+            return {
+                isTaskCommand: true,
+                commandAnalysis: { action: clarificationContext.action },
+                executionResult: result,
+                aiResponse: contextualResponse
+            };
+        }
+
         // First, analyze if this is a task command
         const commandAnalysis = await this.analyzeTaskCommand(userInput);
         

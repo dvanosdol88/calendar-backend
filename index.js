@@ -31,20 +31,32 @@ const openai = new OpenAI({
 const aiTaskAssistant = new AITaskAssistant();
 
 app.post('/ask-gpt', async (req, res) => {
-  const { prompt } = req.body;
+  const { prompt, clarificationContext } = req.body;
   if (!prompt) return res.status(400).send({ error: "No prompt provided." });
 
   try {
     // First, check if this is a task-related command
-    const taskResult = await aiTaskAssistant.processUserInput(prompt);
+    const taskResult = await aiTaskAssistant.processUserInput(prompt, clarificationContext);
     
     if (taskResult.isTaskCommand) {
-      // Handle task commands
-      return res.send({
+      // Handle task commands and clarification responses
+      const response = {
         answer: taskResult.aiResponse,
         taskCommand: true,
         executionResult: taskResult.executionResult
-      });
+      };
+      
+      // If the result requires clarification, add clarification context for next request
+      if (taskResult.executionResult.requiresClarification) {
+        response.requiresClarification = true;
+        response.clarificationContext = {
+          action: taskResult.commandAnalysis.action,
+          matches: taskResult.executionResult.matches,
+          newText: taskResult.commandAnalysis.newText || taskResult.commandAnalysis.taskText
+        };
+      }
+      
+      return res.send(response);
     }
 
     // If not a task command, proceed with calendar/general AI response
