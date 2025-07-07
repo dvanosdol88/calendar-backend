@@ -76,7 +76,7 @@ app.post('/ask-gpt', async (req, res) => {
     // First, check if this is a task-related or calendar-related command
     const taskResult = await aiTaskAssistant.processUserInput(prompt, clarificationContext);
     
-    if (taskResult.isTaskCommand || taskResult.isCalendarCommand) {
+    if (taskResult.isTaskCommand || taskResult.isCalendarCommand || taskResult.isListCommand) {
       // Apply anti-hallucination filter to task response
       const filteredTaskResponse = antiHallucinationFilter.filterResponse(
         taskResult.aiResponse, 
@@ -91,6 +91,7 @@ app.post('/ask-gpt', async (req, res) => {
         { 
           taskCommand: taskResult.isTaskCommand,
           calendarCommand: taskResult.isCalendarCommand,
+          listCommand: taskResult.isListCommand,
           executionResult: taskResult.executionResult,
           antiHallucinationFilter: {
             wasFiltered: filteredTaskResponse.wasRewritten,
@@ -106,6 +107,7 @@ app.post('/ask-gpt', async (req, res) => {
         answer: filteredTaskResponse.response,
         taskCommand: taskResult.isTaskCommand,
         calendarCommand: taskResult.isCalendarCommand,
+        listCommand: taskResult.isListCommand,
         executionResult: taskResult.executionResult,
         conversationId: conversation.conversationId,
         antiHallucinationFilter: {
@@ -178,6 +180,8 @@ app.post('/ask-gpt', async (req, res) => {
       answer: filteredGeneralResponse.response,
       conversationId: conversation.conversationId,
       taskCommand: false,
+      calendarCommand: false,
+      listCommand: false,
       metadata: {
         tokensUsed: completion.usage?.total_tokens || 0,
         contextSize: context.messagesIncluded
