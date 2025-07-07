@@ -901,7 +901,17 @@ If none of the above, return: {"isTaskCommand": false, "isListCommand": false, "
         
         // Handle list management commands
         if (commandAnalysis.isListCommand && commandAnalysis.confidence >= 70) {
-            const listResult = await this.listManagement.processListCommand(userInput);
+            let listResult;
+            
+            // Handle compound operations (modify_list) differently
+            if (commandAnalysis.action === 'modify_list') {
+                // For compound operations, extract the operations from the user input
+                const operations = this.extractCompoundOperations(userInput);
+                listResult = await this.listManagement.processCompoundListOperation('grocery', operations);
+            } else {
+                // Use normal processing for single operations
+                listResult = await this.listManagement.processListCommand(userInput);
+            }
             
             // Get current tasks for context
             const currentTasks = await this.getCurrentTasks();
@@ -999,6 +1009,70 @@ If none of the above, return: {"isTaskCommand": false, "isListCommand": false, "
             console.error('Error generating contextual response:', error);
             return result.message || 'Task operation completed.';
         }
+    }
+
+    /**
+     * Extract compound operations from user input for modify_list actions
+     * @param {string} userInput - The user's input containing compound operations
+     * @returns {Array} Array of operations to perform
+     */
+    extractCompoundOperations(userInput) {
+        const operations = [];
+        const input = userInput.toLowerCase();
+        
+        // Common patterns for compound operations
+        const removePatterns = [
+            /(?:delete|remove|take.*?off)\s+([^,]+?)(?:\s+from.*?list)/gi,
+            /(?:delete|remove|take.*?off)\s+([^,]+?)(?:\s+and)/gi,
+        ];
+        
+        const addPatterns = [
+            /(?:add|put)\s+([^,]+?)(?:\s+to.*?list|$)/gi,
+            /(?:and\s+add|then\s+add)\s+([^,]+?)(?:\s+to.*?list|$)/gi,
+        ];
+        
+        // Extract items to remove
+        for (const pattern of removePatterns) {
+            const matches = [...input.matchAll(pattern)];
+            for (const match of matches) {
+                if (match[1]) {
+                    operations.push({
+                        action: 'remove_item',
+                        itemText: match[1].trim()
+                    });
+                }
+            }
+        }
+        
+        // Extract items to add
+        for (const pattern of addPatterns) {
+            const matches = [...input.matchAll(pattern)];
+            for (const match of matches) {
+                if (match[1]) {
+                    operations.push({
+                        action: 'add_item',
+                        itemText: match[1].trim()
+                    });
+                }
+            }
+        }
+        
+        // Fallback: if no operations found, try to parse "delete X and add Y" pattern
+        if (operations.length === 0) {
+            const compoundMatch = input.match(/(?:delete|remove).*?([a-zA-Z\s]+?).*?(?:and|then).*?add.*?([a-zA-Z\s]+)/i);
+            if (compoundMatch) {
+                operations.push({
+                    action: 'remove_item',
+                    itemText: compoundMatch[1].trim()
+                });
+                operations.push({
+                    action: 'add_item',
+                    itemText: compoundMatch[2].trim()
+                });
+            }
+        }
+        
+        return operations;
     }
 }
 

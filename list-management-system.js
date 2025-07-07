@@ -413,6 +413,29 @@ export class ListManagementSystem {
     }
 
     /**
+     * Process compound list operation directly (for use by AI Task Assistant)
+     */
+    async processCompoundListOperation(listType, operations) {
+        try {
+            const analysis = {
+                isListCommand: true,
+                action: 'modify_list',
+                listType: listType,
+                operations: operations,
+                confidence: 95
+            };
+            
+            return await this.handleModifyList(analysis);
+        } catch (error) {
+            console.error('Error processing compound list operation:', error);
+            return {
+                success: false,
+                message: 'Failed to process compound list operation'
+            };
+        }
+    }
+
+    /**
      * Process list management command
      */
     async processListCommand(userInput) {
