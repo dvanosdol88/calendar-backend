@@ -592,4 +592,3 @@ app.post('/api/calendar/auth/revoke', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-# Deployment trigger - Mon Jul  7 15:15:31 EDT 2025
