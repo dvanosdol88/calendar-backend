@@ -12,6 +12,7 @@ import ContextManager from './context-manager.js';
 import AntiHallucinationFilter from './anti-hallucination-filter.js';
 import GoogleCalendarIntegration from './google-calendar-integration.js';
 import GoogleOAuthFlow from './google-oauth-flow.js';
+import googleServicesRouter from './google-services-routes.js';
 
 dotenv.config();
 const app = express();
@@ -19,8 +20,11 @@ const app = express();
 app.use(cors()); // <--- Added this line to enable CORS for all origins
 app.use(express.json());
 
-// Gmail integration routes
+// Gmail integration routes (legacy)
 app.use(gmailRouter);
+
+// Unified Google services routes (Gmail, Drive, Calendar)
+app.use(googleServicesRouter);
 
 // Task management routes
 app.use(taskRouter);
