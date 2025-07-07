@@ -58,6 +58,8 @@ TASK command examples:
 LIST command examples:
 - "Add apples to grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "add_item", "confidence": 95}
 - "Remove Greek yogurt from grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
+- "Delete Greek yogurt from grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
+- "Please delete greek yogurt from the grocery list and add apples" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
 - "Take Greek yogurt off the grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "remove_item", "confidence": 95}
 - "Mark milk as bought from grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "toggle_item", "confidence": 95}
 - "Show my grocery list" → {"isTaskCommand": false, "isListCommand": true, "isCalendarCommand": false, "action": "show_list", "confidence": 95}
@@ -91,6 +93,8 @@ If none of the above, return: {"isTaskCommand": false, "isListCommand": false, "
             return JSON.parse(response);
         } catch (error) {
             console.error('Error analyzing command:', error);
+            console.error('User input was:', userInput);
+            console.error('OpenAI API error details:', error.response?.data || 'No additional details');
             return { isTaskCommand: false, isListCommand: false, isCalendarCommand: false, confidence: 0 };
         }
     }
